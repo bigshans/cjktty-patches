@@ -8,9 +8,13 @@ Patches from [Gentoo-zh/linux-cjktty](https://github.com/Gentoo-zh/linux-cjktty)
 
 ## Changes
 
+### 2025.8.2 / 6.16
+
+- Update for linux 6.16
+
 ### 2024.5.15 / 6.9
 
-- Resync for linux-6.9.y
+- Update for linux-6.9.y
 
 ### 2023.10.30 / 6.6
 

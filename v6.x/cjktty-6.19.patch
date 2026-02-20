@@ -230,7 +230,7 @@ index 085ffb44c..9dfed9687 100644
 +		return scr_readw(s + 1);
 +}
 +
-+static u8 *font_bits(struct vc_data *vc, const u16 *s, u32 cellsize, u16 charmask,
++u8 *font_bits(struct vc_data *vc, const u16 *s, u32 cellsize, u16 charmask,
 +	struct fbcon_par *par)
 +{
 +	u8 *src;

@@ -8,6 +8,10 @@ Patches from [Gentoo-zh/linux-cjktty](https://github.com/Gentoo-zh/linux-cjktty)
 
 ## Changes
 
+### 2026.6.17 / 7.1
+
+- Update for linux 7.1
+
 ### 2026.4.14 / 7.0
 
 - Update for linux 7.0

@@ -8,6 +8,10 @@ Patches from [Gentoo-zh/linux-cjktty](https://github.com/Gentoo-zh/linux-cjktty)
 
 ## Changes
 
+### 2026.8.9 / 6.12.101
+
+- Remove `static` from `bitblit.c`.
+
 ### 2026.7.27 / 7.1.2
 
 - Fix `CONFIG_FRAMEBUFFER_CONSOLE_ROTATION` lost.

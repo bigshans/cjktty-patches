@@ -8,6 +8,10 @@ Patches from [Gentoo-zh/linux-cjktty](https://github.com/Gentoo-zh/linux-cjktty)
 
 ## Changes
 
+### 2026.8.18 / 7.2
+
+- Update for linux 7.2
+
 ### 2026.8.9 / 6.12.101
 
 - Remove `static` from `bitblit.c`.

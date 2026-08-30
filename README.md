@@ -2,9 +2,16 @@
 
 Patches from [Gentoo-zh/linux-cjktty](https://github.com/Gentoo-zh/linux-cjktty) with minor changes.
 
+> [!TIP]
+> To generate a custom `font.h` from a font, use the [cjkfont](https://github.com/bigshans/cjkfont) tool.
+
 - Starting with linux 5.10, the kernel config option `CONFIG_FONT_16x16_CJK` has been renamed to `CONFIG_FONT_CJK_16x16`.
 - To have a larger font on high resolution screens, you probably want to apply 32x32 font data patch.
 - The patch built-in fonts expect to work with 8x16 or 16x32 fonts. When changing to other font sizes, characters may not display correctly.
+
+## Testing
+
+After applying the patch, you can use this [gist](https://gist.github.com/bigshans/c7dfbaf845d4f629b202d0b6dec249e4) to test the rendering effect (e.g. CJK characters, double width characters, line wrapping, etc.).
 
 ## Changes
 

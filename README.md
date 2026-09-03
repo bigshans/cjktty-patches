@@ -15,6 +15,10 @@ After applying the patch, you can use this [gist](https://gist.github.com/bigsha
 
 ## Changes
 
+### 2026.9.3 / 7.1.13
+
+- Update for linux 7.1.13
+
 ### 2026.8.18 / 7.2
 
 - Update for linux 7.2

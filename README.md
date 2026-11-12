@@ -15,6 +15,10 @@ After applying the patch, you can use this [gist](https://gist.github.com/bigsha
 
 ## Changes
 
+### 2026.11.12 / 7.3.4
+
+- Update for linux 7.3.4
+
 ### 2026.11.9 / 7.4-rc1
 
 - Update for linux 7.4-rc1

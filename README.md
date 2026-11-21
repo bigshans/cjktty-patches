@@ -7,7 +7,9 @@ Patches from [Gentoo-zh/linux-cjktty](https://github.com/Gentoo-zh/linux-cjktty)
 
 - Starting with linux 5.10, the kernel config option `CONFIG_FONT_16x16_CJK` has been renamed to `CONFIG_FONT_CJK_16x16`.
 - To have a larger font on high resolution screens, you probably want to apply 32x32 font data patch.
-- The patch built-in fonts expect to work with 8x16 or 16x32 fonts. When changing to other font sizes, characters may not display correctly.
+- The patch built-in fonts are native on 8x16 and 16x32 cells.  On other font
+  sizes the 16x16 CJK glyph is drawn unscaled and centred in the cell, so it
+  is readable but smaller than the rest of the console text.
 - A 16x32 console without the 32x32 font data patch shows the 16x16 glyphs, unscaled and centred in the cell (half height). Apply the data patch to get the native 32x32 glyphs.
 
 ## Testing
@@ -15,6 +17,23 @@ Patches from [Gentoo-zh/linux-cjktty](https://github.com/Gentoo-zh/linux-cjktty)
 After applying the patch, you can use this [gist](https://gist.github.com/bigshans/c7dfbaf845d4f629b202d0b6dec249e4) to test the rendering effect (e.g. CJK characters, double width characters, line wrapping, etc.).
 
 ## Changes
+
+### 2026.11.21 / 7.4-rc3
+
+- Update for linux 7.4-rc3; generated from the 7.3.5 patch and carries all of
+  its stability fixes.
+- Fix the selection code dropping the cell after every character above U+0080;
+  only the continuation cell of a wide character is skipped now.  CJK text is
+  also copied as UTF-8 with the keyboard in 8-bit mode (`kbd_mode -a`), where
+  it used to come out as NUL bytes (issue #15); a wide character at the end of
+  a line no longer loses the line break either.
+- `font_bits()`: bound-check the glyph offset, use the native CJK fonts only
+  for 8x16/16x32 cells, and degrade a 16x32 console without the 32x32 data to
+  the 16x16 glyphs instead of reading past the end of the font.  Other cell
+  geometries (e.g. 10x18, 16x16, 6x11) now get the 16x16 CJK glyph centred in
+  the cell instead of the console font's `0xff`/`0xfe` glyphs, i.e. a blank
+  cell plus a solid block (issue #14).
+- The 32x32 font data patch is unchanged and still applies on top of this patch.
 
 ### 2026.11.21 / 7.3.5
 

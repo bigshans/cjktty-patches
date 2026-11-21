@@ -26,14 +26,20 @@ After applying the patch, you can use this [gist](https://gist.github.com/bigsha
 - Store U+200B for the second half of a double-width character in the Unicode
   screen (it used to hold the code point twice).
 - Fix the selection code dropping the cell after every character above U+0080;
-  only the continuation cell of a wide character is skipped now.
+  only the continuation cell of a wide character is skipped now.  CJK text is
+  also copied as UTF-8 with the keyboard in 8-bit mode (`kbd_mode -a`), where
+  it used to come out as NUL bytes (issue #15); a wide character at the end of
+  a line no longer loses the line break either.
 - Re-render CJK cells from the screen buffer in `complement_pos()` and in the
   software cursor; `con_putc()` only carries a 16-bit cell, so the code point
   used to be lost.
 - Restore `FB_CUR_SETIMAGE` in the 90°/180° rotated cursors.
-- `font_bits()`: bound-check the glyph offset, only use the CJK fonts for
-  8x16/16x32 cells, and degrade a 16x32 console without the 32x32 data to the
-  16x16 glyphs instead of reading past the end of the font.
+- `font_bits()`: bound-check the glyph offset, use the native CJK fonts only
+  for 8x16/16x32 cells, and degrade a 16x32 console without the 32x32 data to
+  the 16x16 glyphs instead of reading past the end of the font.  Other cell
+  geometries (e.g. 10x18, 16x16, 6x11) now get the 16x16 CJK glyph centred in
+  the cell instead of the console font's `0xff`/`0xfe` glyphs, i.e. a blank
+  cell plus a solid block (issue #14).
 - `get_default_font()`: never pick the CJK 32x32 font when its data is missing.
 - The 32x32 font data patch is unchanged and still applies on top of this patch.
 

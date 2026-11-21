@@ -1,23 +1,79 @@
 diff --git a/drivers/tty/vt/selection.c b/drivers/tty/vt/selection.c
-index f1a3bc5b5..3dfb3a5cc 100644
+index f1a3bc5b5..05a7b2630 100644
 --- a/drivers/tty/vt/selection.c
 +++ b/drivers/tty/vt/selection.c
-@@ -242,6 +242,13 @@ static int vc_selection_store_chars(struct vc_data *vc, bool unicode)
- 			}
- 			obp = bp;
- 		}
-+		/*
-+		 * The console stores the second column of a double-width
-+		 * character as glyph 0xfe; do not copy it twice.
-+		 */
-+		if (i + 2 <= vc_sel.end &&
-+		    (scr_readw(screen_pos(vc_sel.cons, (i + 2) / 2, true)) & 0xff) == 0xfe)
-+			i += 2;
- 	}
- 	vc_sel.buf_len = bp - vc_sel.buffer;
+@@ -66,10 +66,21 @@ static inline void highlight_pointer(const int where)
+ static u32
+ sel_pos(int n, bool unicode)
+ {
+-	if (unicode)
+-		return screen_glyph_unicode(vc_sel.cons, n / 2);
+-	return inverse_translate(vc_sel.cons, screen_glyph(vc_sel.cons, n),
+-			false);
++	const struct vc_data *vc = vc_sel.cons;
++	u16 raw = scr_readw(screen_pos(vc, n / 2, true)) & 0xff;
++
++	/*
++	 * The lead cell of a double-width character carries the 0xff
++	 * placeholder; its real code point lives in the shadow buffer and
++	 * screen_glyph_unicode() returns it.  That value is not a font glyph,
++	 * so it must not be fed to the 8-bit inverse translation table, which
++	 * clips everything >= MAX_GLYPH to 0 and would silently drop all CJK
++	 * text from the selection.
++	 */
++	if (raw == 0xff || unicode)
++		return screen_glyph_unicode(vc, n / 2);
++
++	return inverse_translate(vc, screen_glyph(vc, n), false);
+ }
  
+ /**
+@@ -212,9 +223,12 @@ static int vc_selection_store_chars(struct vc_data *vc, bool unicode)
+ 	char *bp, *obp;
+ 	unsigned int i;
+ 
+-	/* Allocate a new buffer before freeing the old one ... */
+-	/* chars can take up to 4 bytes with unicode */
+-	bp = kmalloc_array((vc_sel.end - vc_sel.start) / 2 + 1, unicode ? 4 : 1,
++	/*
++	 * Allocate a new buffer before freeing the old one ...  A double-width
++	 * character is copied as 3-4 bytes of UTF-8 even in 8-bit keyboard
++	 * mode, so always reserve the full width.
++	 */
++	bp = kmalloc_array((vc_sel.end - vc_sel.start) / 2 + 1, 4,
+ 			   GFP_KERNEL | __GFP_NOWARN);
+ 	if (!bp) {
+ 		printk(KERN_WARNING "selection: kmalloc() failed\n");
+@@ -226,13 +240,25 @@ static int vc_selection_store_chars(struct vc_data *vc, bool unicode)
+ 
+ 	obp = bp;
+ 	for (i = vc_sel.start; i <= vc_sel.end; i += 2) {
+-		u32 c = sel_pos(i, unicode);
+-		if (unicode)
++		u16 raw = scr_readw(screen_pos(vc, i / 2, true)) & 0xff;
++		bool wide = raw == 0xff;
++		u32 c;
++
++		if (raw == 0xfe)
++			continue;	/* second column of a wide character */
++
++		c = sel_pos(i, unicode);
++		if (unicode || wide)
+ 			bp += store_utf8(c, bp);
+ 		else
+ 			*bp++ = c;
+ 		if (!is_space_on_vt(c))
+ 			obp = bp;
++
++		/* the continuation cell holds no character of its own */
++		if (wide && i + 2 <= vc_sel.end)
++			i += 2;
++
+ 		if (!((i + 2) % vc->vc_size_row)) {
+ 			/* strip trailing blanks from line and add newline,
+ 			   unless non-space at end of line. */
 diff --git a/drivers/tty/vt/vt.c b/drivers/tty/vt/vt.c
-index 49a140b49..76b99030d 100644
+index 49a140b49..94244883e 100644
 --- a/drivers/tty/vt/vt.c
 +++ b/drivers/tty/vt/vt.c
 @@ -322,12 +322,12 @@ static inline u16 *screenpos(const struct vc_data *vc, unsigned int offset,
@@ -304,8 +360,29 @@ index 49a140b49..76b99030d 100644
  	if (w & vc->vc_hi_font_mask)
  		c |= 0x100;
  	return c;
+@@ -5065,10 +5102,20 @@ EXPORT_SYMBOL_GPL(screen_glyph);
+ u32 screen_glyph_unicode(const struct vc_data *vc, int n)
+ {
+ 	u32 **uni_lines = vc->vc_uni_lines;
++	u16 shadow;
+ 
+ 	if (uni_lines)
+ 		return uni_lines[n / vc->vc_cols][n % vc->vc_cols];
+ 
++	/*
++	 * The lead cell of a double-width character stores its code point in
++	 * the shadow buffer, not a font glyph.  Bypass inverse_translate(),
++	 * which clips everything >= MAX_GLYPH to 0.
++	 */
++	shadow = scr_readw(screenpos_utf8(vc, n * 2, true));
++	if ((scr_readw(screenpos(vc, n * 2, true)) & 0xff) == 0xff && shadow)
++		return shadow;
++
+ 	return inverse_translate(vc, screen_glyph(vc, n * 2), true);
+ }
+ EXPORT_SYMBOL_GPL(screen_glyph_unicode);
 diff --git a/drivers/video/fbdev/core/bitblit.c b/drivers/video/fbdev/core/bitblit.c
-index 323a9e79a..67d83e4fc 100644
+index 323a9e79a..5e0b530ce 100644
 --- a/drivers/video/fbdev/core/bitblit.c
 +++ b/drivers/video/fbdev/core/bitblit.c
 @@ -16,6 +16,7 @@
@@ -316,26 +393,56 @@ index 323a9e79a..67d83e4fc 100644
  #include <asm/types.h>
  #include "fbcon.h"
  #include "fbcon_rotate.h"
-@@ -43,6 +44,109 @@ static void update_attr(u8 *dst, const u8 *src, int attribute, struct vc_data *v
+@@ -43,6 +44,152 @@ static void update_attr(u8 *dst, const u8 *src, int attribute, struct vc_data *v
  	}
  }
  
 +/*
-+ * A 16x32 console that only has the 16x16 CJK data (the 32x32 data patch was
-+ * not applied): show the 16x16 glyph unscaled, centred in the cell.  The
-+ * lead half goes to the right half of its cell and the trail half to the left
-+ * half of its cell, so the character stays together across the two cells.
++ * Console cells are not necessarily twice as wide as they are high, while
++ * the CJK fonts only provide 8x16 (and 16x32) glyph halves.  For any other
++ * cell geometry, draw the 16x16 glyph unscaled, centred across the two cells
++ * of a double-width character, into a scratch cell of the right pitch.  This
++ * also covers a 16x32 console that only has the 16x16 CJK data (the 32x32
++ * data patch was not applied).
 + */
-+static u8 cjk_16x16_cell[64];
++#define CJK_CELL_MAX 64		/* bytes, enough for a 32x32 cell */
 +
-+static const u8 *cjk_16x16_in_32(const u8 *src, bool lead)
++static u8 cjk_cell[CJK_CELL_MAX];
++
++static const u8 *cjk_16x16_in_cell(const u8 *src, unsigned int w,
++				   unsigned int h, bool lead)
 +{
-+	unsigned int y;
++	unsigned int pitch = (w + 7) / 8;
++	unsigned int y0, x, y;
++	int x0;
 +
-+	memset(cjk_16x16_cell, 0, sizeof(cjk_16x16_cell));
-+	for (y = 0; y < 16; y++)
-+		cjk_16x16_cell[(y + 8) * 2 + (lead ? 1 : 0)] = src[y];
-+	return cjk_16x16_cell;
++	if (!w || !h || pitch * h > sizeof(cjk_cell))
++		return NULL;
++
++	memset(cjk_cell, 0, sizeof(cjk_cell));
++
++	/* centre the 16 pixel wide character across the two cells */
++	x0 = (int)(2 * w) - 16;
++	x0 = x0 > 0 ? x0 / 2 : -((-x0) / 2);
++	if (!lead)
++		x0 += 8;
++	y0 = h > 16 ? (h - 16) / 2 : 0;
++
++	for (y = 0; y < 16 && y + y0 < h; y++) {
++		u8 bits = src[y];
++
++		for (x = 0; x < 8; x++) {
++			int cx = x0 + (int)x;
++
++			if (cx < 0 || (unsigned int)cx >= w)
++				continue;
++			if (bits & (0x80 >> x))
++				cjk_cell[(y + y0) * pitch + cx / 8] |=
++					0x80 >> (cx % 8);
++		}
++	}
++
++	return cjk_cell;
 +}
 +
 +static u16 utf8_pos(struct vc_data *vc, const u16 *s)
@@ -354,8 +461,9 @@ index 323a9e79a..67d83e4fc 100644
 +{
 +	u16 ch = scr_readw(s) & charmask;
 +
-+	/* the CJK fonts are only defined for 8x16 and 16x32 console fonts */
-+	if ((ch == 0xff || ch == 0xfe) && cellsize != 16 && cellsize != 64)
++	/* the rotated CJK glyph buffers only exist for 8x16 and 16x32 cells */
++	if (par && (ch == 0xff || ch == 0xfe) &&
++	    cellsize != 16 && cellsize != 64)
 +		return vc->vc_font.data + ch * cellsize;
 +
 +#ifdef CONFIG_FRAMEBUFFER_CONSOLE_ROTATION
@@ -380,53 +488,65 @@ index 323a9e79a..67d83e4fc 100644
 +	} else
 +#endif
 +    {
-+		const char *fontname = (cellsize == 16) ? "CJK16x16" : "CJK32x32";
-+		u32 cellsize_utf = (cellsize == 16) ? 16 : 64;
 +		const struct font_desc *font;
 +		const u8 *fontdata;
-+		u32 off;
++		u32 cellsize_utf, off;
 +		u16 c_utf;
 +
 +		/* non-rotated path (bitblit): lookup in font data directly */
 +		if (ch != 0xff && ch != 0xfe)
 +			return vc->vc_font.data + ch * cellsize;
 +
-+		font = find_font(fontname);
 +		c_utf = utf8_pos(vc, s);
-+		off = c_utf * cellsize_utf * 2 + (ch == 0xfe ? cellsize_utf : 0);
-+		/*
-+		 * The 32x32 glyph data lives in a separate patch, which sets
-+		 * .pref = 19; the base patch leaves it at -1 and ships an
-+		 * empty font.  Treat a negative .pref as "no data".
-+		 */
-+		if (!font || !font->data || font->pref < 0 ||
-+		    off + cellsize_utf > font_data_size(font->data)) {
-+			const struct font_desc *f16;
-+			u32 off16;
 +
-+			memset(cjk_16x16_cell, 0, sizeof(cjk_16x16_cell));
-+			/* degrade 16x32 -> 16x16, as documented in the README;
-+			 * other console font sizes are not supported */
-+			if (cellsize != 64)
-+				return vc->vc_font.data + ch * cellsize;
-+			f16 = find_font("CJK16x16");
-+			if (!f16 || !f16->data)
-+				return vc->vc_font.data + ch * cellsize;
-+			off16 = c_utf * 32 + (ch == 0xfe ? 16 : 0);
-+			if (off16 + 16 > font_data_size(f16->data))
-+				return vc->vc_font.data + ch * cellsize;
-+			return cjk_16x16_in_32(font_data_buf(f16->data) + off16,
-+					       ch == 0xff);
++		/*
++		 * The CJK fonts store the two halves of a character as separate
++		 * glyphs, one per console cell.
++		 */
++		if (cellsize == 16 || cellsize == 64) {
++			const char *fontname = (cellsize == 16) ?
++					       "CJK16x16" : "CJK32x32";
++
++			cellsize_utf = (cellsize == 16) ? 16 : 64;
++			font = find_font(fontname);
++			off = c_utf * cellsize_utf * 2 +
++			      (ch == 0xfe ? cellsize_utf : 0);
++			/*
++			 * The 32x32 glyph data lives in a separate patch, which
++			 * sets .pref = 19; the base patch leaves it at -1 and
++			 * ships an empty font.  Treat a negative .pref as
++			 * "no data".
++			 */
++			if (font && font->data && font->pref >= 0 &&
++			    off + cellsize_utf <= font_data_size(font->data))
++				return font_data_buf(font->data) + off;
 +		}
-+		fontdata = font_data_buf(font->data);
-+		return fontdata + off;
++
++		/*
++		 * The console font is not 8x16/16x32 (the CJK fonts only exist
++		 * for those geometries), or the matching CJK font has no data:
++		 * draw the 16x16 glyph centred in the cell.
++		 */
++		font = find_font("CJK16x16");
++		if (font && font->data) {
++			off = c_utf * 32 + (ch == 0xfe ? 16 : 0);
++			if (off + 16 <= font_data_size(font->data)) {
++				fontdata = cjk_16x16_in_cell(
++					font_data_buf(font->data) + off,
++					vc->vc_font.width, vc->vc_font.height,
++					ch == 0xff);
++				if (fontdata)
++					return fontdata;
++			}
++		}
++		return vc->vc_font.data + ch * cellsize;
 +	}
 +}
 +
  static void bit_bmove(struct vc_data *vc, struct fb_info *info, int sy,
  		      int sx, int dy, int dx, int height, int width)
  {
-@@ -79,16 +183,11 @@ static inline void bit_putcs_aligned(struct vc_data *vc, struct fb_info *info,
+@@ -79,16 +226,11 @@ static inline void bit_putcs_aligned(struct vc_data *vc, struct fb_info *info,
  				     struct fb_image *image, u8 *buf, u8 *dst)
  {
  	u16 charmask = vc->vc_hi_font_mask ? 0x1ff : 0xff;
@@ -444,7 +564,7 @@ index 323a9e79a..67d83e4fc 100644
  
  		if (attr) {
  			update_attr(buf, src, attr, vc);
-@@ -116,18 +215,12 @@ static inline void bit_putcs_unaligned(struct vc_data *vc,
+@@ -116,18 +258,12 @@ static inline void bit_putcs_unaligned(struct vc_data *vc,
  				       u8 *dst)
  {
  	u16 charmask = vc->vc_hi_font_mask ? 0x1ff : 0xff;
@@ -464,7 +584,7 @@ index 323a9e79a..67d83e4fc 100644
  
  		if (attr) {
  			update_attr(buf, src, attr, vc);
-@@ -283,9 +376,12 @@ static void bit_cursor(struct vc_data *vc, struct fb_info *info, bool enable,
+@@ -283,9 +419,12 @@ static void bit_cursor(struct vc_data *vc, struct fb_info *info, bool enable,
  	/* Clamp to font size, same as bit_putcs_aligned() */
  	if (c >= vc->vc_font.charcount)
  		c = 0;
